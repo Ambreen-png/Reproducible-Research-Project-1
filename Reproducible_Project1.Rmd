@@ -1,0 +1,236 @@
+---
+title: "Reproducible Research — Project 1"
+author: "Chanda Ambreen"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    number_sections: true
+---
+
+# Overview
+
+This report follows the exact tasks of **Reproducible Research (Project 1)** in the Coursera Data Science Specialization (JHU). It uses the activity monitoring dataset with steps recorded every 5 minutes.
+
+**Variables**
+- `steps`: number of steps in a 5-minute interval (may be `NA`)
+- `date`: measurement date (YYYY-MM-DD)
+- `interval`: the 5-minute interval identifier (e.g. 0, 5, 10, …, 2355)
+
+> Reproducibility: all code chunks are self-contained. If `activity.csv` is missing, the script attempts to download and unzip it automatically.
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 8, fig.height = 5)
+
+# Packages
+library(tidyverse)   # dplyr, ggplot2, readr, tibble
+library(lubridate)   # dates + weekdays/weekends
+```
+
+# Data: Load and Preprocess
+
+## Obtain the dataset (download if needed)
+
+```{r data-download}
+zip_url  <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip"
+zip_file <- "activity.zip"
+csv_file <- "activity.csv"
+
+# If the CSV isn't present, try to download and unzip it
+if (!file.exists(csv_file)) {
+  if (!file.exists(zip_file)) {
+    message("Downloading dataset…")
+    try(download.file(zip_url, destfile = zip_file, mode = "wb"), silent = TRUE)
+  }
+  if (file.exists(zip_file)) {
+    unzip(zip_file)
+  } else {
+    warning("Could not download dataset automatically. Please place 'activity.csv' in the working directory.")
+  }
+}
+```
+
+## Read and inspect
+
+```{r data-load}
+activity <- readr::read_csv(
+  csv_file,
+  show_col_types = FALSE,
+  progress = FALSE,
+  col_types = cols(
+    steps    = col_double(),
+    date     = col_date(),    # parse to Date
+    interval = col_integer()
+  )
+)
+
+glimpse(activity)
+```
+
+> **Note:** We will treat `NA` values as *missing measurements*, not zeros. The first analysis excludes missing values, and a later section imputes them.
+
+# 1. Mean total number of steps taken per day
+
+**Statistical goal:** Compute the distribution of the *daily total* number of steps, then report its **mean** and **median**.
+
+Mathematically, for each day \(d\), the total steps \(T_d = \sum_i s_{di}\) where \(s_{di}\) are the 5-minute-interval step counts observed that day (ignoring missing entries).
+
+```{r steps-per-day}
+daily_steps <- activity %>%
+  group_by(date) %>%
+  summarise(total_steps = sum(steps, na.rm = TRUE), .groups = "drop")
+
+mean_steps   <- mean(daily_steps$total_steps, na.rm = TRUE)
+median_steps <- median(daily_steps$total_steps, na.rm = TRUE)
+
+# Show summary statistics
+tribble(
+  ~Statistic, ~Value,
+  "Mean of total steps/day (original)",   mean_steps,
+  "Median of total steps/day (original)", median_steps
+)
+```
+
+```{r hist-daily-steps}
+# Histogram of daily totals
+ggplot(daily_steps, aes(x = total_steps)) +
+  geom_histogram(binwidth = 1000) +
+  labs(title = "Total Steps per Day (Original Data, NAs omitted)",
+       x = "Total steps", y = "Number of days") +
+  theme_minimal(base_size = 12)
+```
+
+**Interpretation tips:**
+- The mean gives the *central tendency* of daily totals.
+- The median is robust to outliers; if mean ≫ median, distribution might be right-skewed.
+
+# 2. Average daily activity pattern
+
+**Goal:** For each 5-minute `interval`, compute the **average steps across all days** and identify the interval with the highest average.
+
+Formally, for interval \(j\), \( \bar{s}_j = \nolinebreak \frac{1}{|D_j|} \sum_{d \in D_j} s_{dj} \), averaging across days where the interval was observed.
+
+```{r interval-pattern}
+interval_means <- activity %>%
+  group_by(interval) %>%
+  summarise(mean_steps = mean(steps, na.rm = TRUE), .groups = "drop")
+
+peak_interval <- interval_means %>% slice_max(mean_steps, n = 1)
+peak_interval
+```
+
+```{r interval-lineplot}
+# Time-series of the mean steps by interval
+ggplot(interval_means, aes(x = interval, y = mean_steps)) +
+  geom_line() +
+  labs(title = "Average Steps by 5-Minute Interval (Across All Days)",
+       x = "5-minute interval", y = "Average steps") +
+  theme_minimal(base_size = 12)
+```
+
+**Interpretation tip:** The peak interval often corresponds to morning activity spikes.
+
+# 3. Imputing missing values
+
+**Goal:** Quantify missingness, then create a complete dataset by imputing `NA` values. We use a simple, assignment-aligned strategy: *replace missing `steps` with the average for that 5-minute `interval` across all days*.
+
+```{r count-missing}
+# Total number of missing step values
+total_na <- sum(is.na(activity$steps))
+tribble(~Metric, ~Value, "Total NA values in 'steps'", total_na)
+```
+
+```{r impute}
+# Impute NAs using the interval means (do NOT round to preserve averages)
+activity_imputed <- activity %>%
+  left_join(interval_means, by = "interval") %>%
+  mutate(steps = if_else(is.na(steps), mean_steps, steps)) %>%
+  select(steps, date, interval)
+
+# Recompute daily totals with imputed data
+daily_steps_imputed <- activity_imputed %>%
+  group_by(date) %>%
+  summarise(total_steps = sum(steps), .groups = "drop")
+
+mean_steps_imp   <- mean(daily_steps_imputed$total_steps)
+median_steps_imp <- median(daily_steps_imputed$total_steps)
+
+tribble(
+  ~Statistic, ~Value,
+  "Mean of total steps/day (imputed)",   mean_steps_imp,
+  "Median of total steps/day (imputed)", median_steps_imp
+)
+```
+
+```{r hist-imputed}
+# Histogram after imputation
+ggplot(daily_steps_imputed, aes(x = total_steps)) +
+  geom_histogram(binwidth = 1000) +
+  labs(title = "Total Steps per Day (After Imputing Missing Values)",
+       x = "Total steps", y = "Number of days") +
+  theme_minimal(base_size = 12)
+```
+
+**Compare original vs imputed**
+
+```{r compare-stats}
+comparison <- tibble(
+  Metric = c("Mean (original)", "Median (original)", "Mean (imputed)", "Median (imputed)"),
+  Value  = c(mean_steps, median_steps, mean_steps_imp, median_steps_imp)
+)
+comparison
+```
+
+> **Note:** With mean-by-interval imputation, the **mean** of total steps per day usually stays similar, while the **median** may move closer to the mean because imputation reduces variability due to missingness.
+
+# 4. Weekday vs. Weekend activity patterns
+
+**Goal:** Create a factor with two levels — `Weekday` and `Weekend` — then compare average steps by interval across these two groups.
+
+```{r weekday-weekend}
+activity_imputed <- activity_imputed %>%
+  mutate(
+    day_type = if_else(lubridate::wday(date, week_start = 1) >= 6, "Weekend", "Weekday"),
+    day_type = factor(day_type, levels = c("Weekday", "Weekend"))
+  )
+
+interval_daytype <- activity_imputed %>%
+  group_by(day_type, interval) %>%
+  summarise(mean_steps = mean(steps), .groups = "drop")
+```
+
+```{r panel-plot}
+# Faceted line plot: weekday vs weekend
+ggplot(interval_daytype, aes(x = interval, y = mean_steps)) +
+  geom_line() +
+  facet_wrap(~ day_type, ncol = 1) +
+  labs(title = "Average Steps by Interval: Weekday vs Weekend",
+       x = "5-minute interval", y = "Average steps") +
+  theme_minimal(base_size = 12)
+```
+
+**Interpretation tip:** Weekends often show later starts and different peak times compared to weekdays.
+
+# Reproducibility Notes
+
+- **Environment:**
+```{r session-info}
+sessionInfo()
+```
+- **Determinism:** Using deterministic mean-by-interval imputation ensures your results are reproducible.
+- **Alternatives:** Median-by-interval or multiple imputation are also valid but would change downstream statistics.
+
+# Appendix: Helper Tables (optional)
+
+```{r appendix-tables, echo=FALSE}
+# Quick tables you can reference when writing up your commentary
+
+# Top intervals by average steps
+interval_means %>% arrange(desc(mean_steps)) %>% head(10)
+
+# Daily totals (first 10 rows)
+daily_steps %>% arrange(desc(total_steps)) %>% head(10)
