@@ -1,0 +1,32 @@
+# History files
+.Rhistory
+.Rapp.history
+
+# Session Data files
+.RData
+.RDataTmp
+
+# RStudio files
+.Rproj.user/
+*.Rproj
+
+# Cache
+.Rproj.user/
+.Rproj.user/*
+.Rproj.user/*/*
+*.Rproj
+.Rhistory
+.RData
+*.utf8.md
+*.knit.md
+*_cache/
+cache/
+
+# Reports
+*.html
+*.pdf
+*.docx
+
+# OS-specific junk
+.DS_Store
+Thumbs.db
